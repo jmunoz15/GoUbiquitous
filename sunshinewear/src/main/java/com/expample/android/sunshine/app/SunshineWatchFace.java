@@ -36,6 +36,9 @@ import android.view.SurfaceHolder;
 import android.view.WindowInsets;
 
 import java.lang.ref.WeakReference;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
@@ -46,6 +49,8 @@ import java.util.concurrent.TimeUnit;
 public class SunshineWatchFace extends CanvasWatchFaceService {
     private static final Typeface NORMAL_TYPEFACE =
             Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
+
+    private static final String DATE_FORMAT  = "MM/dd/yyyy";
 
     /**
      * Update rate in milliseconds for interactive mode. We update once a second since seconds are
@@ -88,7 +93,13 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
         boolean mRegisteredTimeZoneReceiver = false;
         Paint mBackgroundPaint;
         Paint mTextPaint;
+        Paint mDatePaint;
         boolean mAmbient;
+
+        Date mDate;
+        DateFormat mDateFormat;
+        Resources resources;
+
         Time mTime;
         final BroadcastReceiver mTimeZoneReceiver = new BroadcastReceiver() {
             @Override
@@ -97,7 +108,6 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
                 mTime.setToNow();
             }
         };
-        int mTapCount;
 
         float mXOffset;
         float mYOffset;
@@ -118,7 +128,7 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
                     .setShowSystemUiTime(false)
                     .setAcceptsTapEvents(true)
                     .build());
-            Resources resources = SunshineWatchFace.this.getResources();
+            resources = SunshineWatchFace.this.getResources();
             mYOffset = resources.getDimension(R.dimen.digital_y_offset);
 
             mBackgroundPaint = new Paint();
@@ -127,7 +137,12 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
             mTextPaint = new Paint();
             mTextPaint = createTextPaint(resources.getColor(R.color.digital_text));
 
+            mDatePaint = new Paint();
+            mDatePaint = createTextPaint(resources.getColor(R.color.digital_text));
+
             mTime = new Time();
+            mDate = new Date();
+            mDateFormat = new SimpleDateFormat(DATE_FORMAT);
         }
 
         @Override
@@ -150,8 +165,7 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
 
             if (visible) {
                 registerReceiver();
-
-                // Update time zone in case it changed while we weren't visible.
+                mDate = new Date();
                 mTime.clear(TimeZone.getDefault().getID());
                 mTime.setToNow();
             } else {
@@ -191,8 +205,11 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
                     ? R.dimen.digital_x_offset_round : R.dimen.digital_x_offset);
             float textSize = resources.getDimension(isRound
                     ? R.dimen.digital_text_size_round : R.dimen.digital_text_size);
+            float dateSize = resources.getDimension(isRound ?
+                    R.dimen.digital_date_size_round : R.dimen.digital_date_size);
 
             mTextPaint.setTextSize(textSize);
+            mDatePaint.setTextSize(dateSize);
         }
 
         @Override
@@ -214,6 +231,7 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
                 mAmbient = inAmbientMode;
                 if (mLowBitAmbient) {
                     mTextPaint.setAntiAlias(!inAmbientMode);
+                    mDatePaint.setAntiAlias(!inAmbientMode);
                 }
                 invalidate();
             }
@@ -223,32 +241,11 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
             updateTimer();
         }
 
-        /**
-         * Captures tap event (and tap type) and toggles the background color if the user finishes
-         * a tap.
-         */
-        @Override
-        public void onTapCommand(int tapType, int x, int y, long eventTime) {
-            Resources resources = SunshineWatchFace.this.getResources();
-            switch (tapType) {
-                case TAP_TYPE_TOUCH:
-                    // The user has started touching the screen.
-                    break;
-                case TAP_TYPE_TOUCH_CANCEL:
-                    // The user has started a different gesture or otherwise cancelled the tap.
-                    break;
-                case TAP_TYPE_TAP:
-                    // The user has completed the tap gesture.
-                    mTapCount++;
-                    mBackgroundPaint.setColor(resources.getColor(mTapCount % 2 == 0 ?
-                            R.color.background : R.color.background2));
-                    break;
-            }
-            invalidate();
-        }
 
         @Override
         public void onDraw(Canvas canvas, Rect bounds) {
+
+            mYOffset = resources.getDimension(R.dimen.digital_y_offset);
             // Draw the background.
             if (isInAmbientMode()) {
                 canvas.drawColor(Color.BLACK);
@@ -258,10 +255,14 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
 
             // Draw H:MM in ambient mode or H:MM:SS in interactive mode.
             mTime.setToNow();
-            String text = mAmbient
-                    ? String.format("%d:%02d", mTime.hour, mTime.minute)
-                    : String.format("%d:%02d:%02d", mTime.hour, mTime.minute, mTime.second);
-            canvas.drawText(text, mXOffset, mYOffset, mTextPaint);
+            String text = String.format("%d:%02d", mTime.hour, mTime.minute);
+            canvas.drawText(text, bounds.centerX() - (mTextPaint.measureText(text))/2, mYOffset, mTextPaint);
+
+            mYOffset += mTextPaint.getTextSize();
+            mDate = new Date();
+            String dateText = mDateFormat.format(mDate);
+            canvas.drawText(dateText, bounds.centerX() - (mDatePaint.measureText(dateText))/2, 0, mDatePaint);
+
         }
 
         /**
