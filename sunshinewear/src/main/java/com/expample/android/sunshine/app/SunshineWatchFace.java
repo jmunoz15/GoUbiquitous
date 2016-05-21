@@ -29,21 +29,28 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.support.wearable.activity.ConfirmationActivity;
 import android.support.wearable.watchface.CanvasWatchFaceService;
 import android.support.wearable.watchface.WatchFaceStyle;
 import android.text.format.Time;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.WindowInsets;
+import android.widget.Toast;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.ResultCallback;
 import com.google.android.gms.wearable.DataApi;
 import com.google.android.gms.wearable.DataEvent;
 import com.google.android.gms.wearable.DataEventBuffer;
 import com.google.android.gms.wearable.DataItem;
 import com.google.android.gms.wearable.DataMap;
 import com.google.android.gms.wearable.DataMapItem;
+import com.google.android.gms.wearable.MessageApi;
+import com.google.android.gms.wearable.MessageEvent;
+import com.google.android.gms.wearable.Node;
+import com.google.android.gms.wearable.NodeApi;
 import com.google.android.gms.wearable.Wearable;
 
 import java.lang.ref.WeakReference;
@@ -102,8 +109,7 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
         }
     }
 
-    private class Engine extends CanvasWatchFaceService.Engine implements DataApi.DataListener,
-            GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener{
+    private class Engine extends CanvasWatchFaceService.Engine {
 
         private static final String SUNSHINE_KEY = "/sunshine";
         private static final String MAXTEMP_KEY = "maxTemp";
@@ -141,7 +147,6 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
         float mLineYOffset;
         float mTempYOffset;
 
-        private GoogleApiClient mGoogleApiClient;
 
         /**
          * Whether the display supports fewer bits for each color in ambient mode. When true, we
@@ -149,10 +154,15 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
          */
         boolean mLowBitAmbient;
 
+        private GoogleApiClient apiClient;
+        private String remoteNodeId;
+        private NodeApi.NodeListener nodeListener;
+        private MessageApi.MessageListener messageListener;
+
         @Override
         public void onCreate (SurfaceHolder holder){
             super.onCreate(holder);
-            Log.v("WATCHFACE","VIEW CREATED");
+            Log.v("WATCHFACE", "VIEW CREATED");
             setWatchFaceStyle(new WatchFaceStyle.Builder(SunshineWatchFace.this)
                     .setCardPeekMode(WatchFaceStyle.PEEK_MODE_VARIABLE)
                     .setBackgroundVisibility(WatchFaceStyle.BACKGROUND_VISIBILITY_INTERRUPTIVE)
@@ -187,19 +197,66 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
             mDate = new Date();
             mDateFormat = new SimpleDateFormat(DATE_FORMAT);
 
-            mGoogleApiClient = new GoogleApiClient.Builder(SunshineWatchFace.this)
-                    .addApi(Wearable.API)
-                    .addConnectionCallbacks(this)
-                    .addOnConnectionFailedListener(this)
-                    .build();
-            mGoogleApiClient.connect();
+            nodeListener = new NodeApi.NodeListener() {
+                @Override
+                public void onPeerConnected(Node node) {
+                    remoteNodeId = node.getId();
+
+                }
+
+                @Override
+                public void onPeerDisconnected(Node node) {
+
+                }
+            };
+            final Handler handler = new Handler();
+
+            messageListener = new MessageApi.MessageListener() {
+                @Override
+                public void onMessageReceived(MessageEvent messageEvent) {
+                    if (messageEvent.getPath().equals(MAXTEMP_KEY)) {
+                        handler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                mMaxTemp = "54°";
+                                invalidate();
+
+                            }
+                        });
+                    }
+                }
+            };
+
+            apiClient = new GoogleApiClient.Builder(getApplicationContext()).addConnectionCallbacks(new GoogleApiClient.ConnectionCallbacks() {
+                @Override
+                public void onConnected(Bundle bundle) {
+                    // Register Node and Message listeners
+                    Wearable.NodeApi.addListener(apiClient, nodeListener);
+                    Wearable.MessageApi.addListener(apiClient, messageListener);
+                    // If there is a connected node, get it's id that is used when sending messages
+                    Wearable.NodeApi.getConnectedNodes(apiClient).setResultCallback(new ResultCallback<NodeApi.GetConnectedNodesResult>() {
+                        @Override
+                        public void onResult(NodeApi.GetConnectedNodesResult getConnectedNodesResult) {
+                            if (getConnectedNodesResult.getStatus().isSuccess() && getConnectedNodesResult.getNodes().size() > 0) {
+                                remoteNodeId = getConnectedNodesResult.getNodes().get(0).getId();
+
+                            }
+                        }
+                    });
+                }
+
+                @Override
+                public void onConnectionSuspended(int i) {
+                }
+            }).addApi(Wearable.API).build();
+
+            apiClient.connect();
         }
 
         @Override
         public void onDestroy() {
+            apiClient.disconnect();
             mUpdateTimeHandler.removeMessages(MSG_UPDATE_TIME);
-            Wearable.DataApi.removeListener(mGoogleApiClient, this);
-            mGoogleApiClient.disconnect();
             super.onDestroy();
         }
 
@@ -357,39 +414,6 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
                         - (timeMs % INTERACTIVE_UPDATE_RATE_MS);
                 mUpdateTimeHandler.sendEmptyMessageDelayed(MSG_UPDATE_TIME, delayMs);
             }
-        }
-
-        @Override
-        public void onConnected(Bundle bundle) {
-            Wearable.DataApi.addListener(mGoogleApiClient, this);
-        }
-
-        @Override
-        public void onConnectionSuspended(int i) {
-
-        }
-
-        @Override
-        public void onDataChanged(DataEventBuffer dataEvents) {
-            for (DataEvent event : dataEvents) {
-                if (event.getType() == DataEvent.TYPE_CHANGED) {
-                    // DataItem changed
-                    DataItem item = event.getDataItem();
-                    if (item.getUri().getPath().compareTo(SUNSHINE_KEY) == 0) {
-                        DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
-                        mMaxTemp = dataMap.getString(MAXTEMP_KEY);
-                        invalidate();
-                    }
-                } else if (event.getType() == DataEvent.TYPE_DELETED) {
-                    // DataItem deleted
-                }
-            }
-
-        }
-
-        @Override
-        public void onConnectionFailed(ConnectionResult connectionResult) {
-
         }
     }
 }

@@ -15,6 +15,7 @@
  */
 package com.example.android.sunshine.app;
 
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
@@ -29,17 +30,19 @@ import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.widget.Toast;
 
 import com.example.android.sunshine.app.data.WeatherContract;
 import com.example.android.sunshine.app.gcm.RegistrationIntentService;
 import com.example.android.sunshine.app.sync.SunshineSyncAdapter;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GoogleApiAvailability;
+import com.google.android.gms.common.GooglePlayServicesUtil;
 import com.google.android.gms.common.api.GoogleApiClient;
-import com.google.android.gms.common.api.PendingResult;
-import com.google.android.gms.wearable.DataApi;
-import com.google.android.gms.wearable.PutDataMapRequest;
-import com.google.android.gms.wearable.PutDataRequest;
+import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.wearable.MessageApi;
+import com.google.android.gms.wearable.Node;
+import com.google.android.gms.wearable.NodeApi;
 import com.google.android.gms.wearable.Wearable;
 
 public class MainActivity extends AppCompatActivity implements ForecastFragment.Callback {
@@ -48,15 +51,13 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
     private static final String DETAILFRAGMENT_TAG = "DFTAG";
     private final static int PLAY_SERVICES_RESOLUTION_REQUEST = 9000;
     public static final String SENT_TOKEN_TO_SERVER = "sentTokenToServer";
-    private static final String TAG = MainActivity.class.getCanonicalName();
-
-    private static final String SUNSHINE_KEY = "/sunshine";
-    private static final String MAXTEMP_KEY = "maxTemp";
+    private static final String MAXTEMP_KEY = "/maxTemp";
 
     private boolean mTwoPane;
     private String mLocation;
-
-    private GoogleApiClient mGoogleApiClient;
+    private GoogleApiClient mGoogleAPIClient;
+    private NodeApi.NodeListener nodeListener;
+    private String remoteNodeId;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -120,36 +121,54 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
             }
         }
 
-        mGoogleApiClient = new GoogleApiClient.Builder(this)
-                .addConnectionCallbacks(new GoogleApiClient.ConnectionCallbacks() {
-                    @Override
-                    public void onConnected(Bundle connectionHint) {
-                        Log.d(TAG, "onConnected: " + connectionHint);
-                        sendTemperature();
-                    }
-                    @Override
-                    public void onConnectionSuspended(int cause) {
-                        Log.d(TAG, "onConnectionSuspended: " + cause);
-                    }
-                })
-                .addOnConnectionFailedListener(new GoogleApiClient.OnConnectionFailedListener() {
-                    @Override
-                    public void onConnectionFailed(ConnectionResult result) {
-                        Log.d(TAG, "onConnectionFailed: " + result);
-                    }
-                })
-                        // Request access only to the Wearable API
-                .addApi(Wearable.API)
-                .build();
+        nodeListener = new NodeApi.NodeListener() {
+            @Override
+            public void onPeerConnected(Node node) {
+                remoteNodeId = node.getId();
+                sendWearableData();
 
-        mGoogleApiClient.connect();
+            }
+
+            @Override
+            public void onPeerDisconnected(Node node) {
+               
+            }
+        };
+
+        mGoogleAPIClient = new GoogleApiClient.Builder(getApplicationContext()).addConnectionCallbacks(new GoogleApiClient.ConnectionCallbacks() {
+            @Override
+            public void onConnected(Bundle bundle) {
+                // Register Node and Message listeners
+                Wearable.NodeApi.addListener(mGoogleAPIClient, nodeListener);
+                // If there is a connected node, get it's id that is used when sending messages
+                Wearable.NodeApi.getConnectedNodes(mGoogleAPIClient).setResultCallback(new ResultCallback<NodeApi.GetConnectedNodesResult>() {
+                    @Override
+                    public void onResult(NodeApi.GetConnectedNodesResult getConnectedNodesResult) {
+                        if (getConnectedNodesResult.getStatus().isSuccess() && getConnectedNodesResult.getNodes().size() > 0) {
+                            remoteNodeId = getConnectedNodesResult.getNodes().get(0).getId();
+                            sendWearableData();
+                        }
+                    }
+                });
+            }
+
+            @Override
+            public void onConnectionSuspended(int i) {
+
+            }
+        }).addOnConnectionFailedListener(new GoogleApiClient.OnConnectionFailedListener() {
+            @Override
+            public void onConnectionFailed(ConnectionResult connectionResult) {
+                if (connectionResult.getErrorCode() == ConnectionResult.API_UNAVAILABLE)
+                    Toast.makeText(getApplicationContext(), "Connection Unavailable", Toast.LENGTH_LONG).show();
+            }
+        }).addApi(Wearable.API).build();
 
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        mGoogleApiClient.disconnect();
     }
 
     @Override
@@ -191,6 +210,26 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
             }
             mLocation = location;
         }
+        int connectionResult = GooglePlayServicesUtil.isGooglePlayServicesAvailable(getApplicationContext());
+
+        if (connectionResult != ConnectionResult.SUCCESS) {
+            // Google Play Services is NOT available. Show appropriate error dialog
+            GooglePlayServicesUtil.showErrorDialogFragment(connectionResult, this, 0, new DialogInterface.OnCancelListener() {
+                @Override
+                public void onCancel(DialogInterface dialog) {
+                    finish();
+                }
+            });
+        } else {
+            mGoogleAPIClient.connect();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        Wearable.NodeApi.removeListener(mGoogleAPIClient, nodeListener);
+        mGoogleAPIClient.disconnect();
     }
 
     @Override
@@ -240,11 +279,13 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
         return true;
     }
 
-    private void sendTemperature() {
-        PutDataMapRequest putDataMapReq = PutDataMapRequest.create(SUNSHINE_KEY);
-        putDataMapReq.getDataMap().putString(MAXTEMP_KEY, "99");
-        PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
-        PendingResult<DataApi.DataItemResult> pendingResult =
-                Wearable.DataApi.putDataItem(mGoogleApiClient, putDataReq);
+    public void sendWearableData(){
+        Wearable.MessageApi.sendMessage(mGoogleAPIClient, remoteNodeId, MAXTEMP_KEY, null).setResultCallback(new ResultCallback<MessageApi.SendMessageResult>() {
+            @Override
+            public void onResult(MessageApi.SendMessageResult sendMessageResult) {
+
+            }
+        });
     }
+    
 }
