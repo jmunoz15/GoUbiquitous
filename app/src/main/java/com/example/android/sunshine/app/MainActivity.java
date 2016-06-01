@@ -265,11 +265,11 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
     }
 
     public void sendWearableData(){
-        Bitmap bitmap = BitmapFactory.decodeResource(getResources(), R.drawable.art_rain);
+        Bitmap bitmap = BitmapFactory.decodeResource(getResources(), R.drawable.art_storm);
         Asset asset = createAssetFromBitmap(bitmap);
         PutDataMapRequest putDataMapReq = PutDataMapRequest.create("/sunshine_data");
-        putDataMapReq.getDataMap().putString("MAXTEMP", "20°");
-        putDataMapReq.getDataMap().putString("MINTEMP", "10°");
+        putDataMapReq.getDataMap().putString("MAXTEMP", "25°");
+        putDataMapReq.getDataMap().putString("MINTEMP", "30°");
         putDataMapReq.getDataMap().putAsset("WEATHER_ASSET", asset);
         PutDataRequest putDataReq = putDataMapReq.asPutDataRequest();
         Wearable.DataApi.putDataItem(mGoogleApiClient, putDataReq);

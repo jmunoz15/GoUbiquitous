@@ -14,4 +14,5 @@
 
     <dimen name="digital_temp_size">15dp</dimen>
     <dimen name="digital_temp_size_round">20dp</dimen>
+    <dimen name="asset_right_margin">20dp</dimen>
 </resources>

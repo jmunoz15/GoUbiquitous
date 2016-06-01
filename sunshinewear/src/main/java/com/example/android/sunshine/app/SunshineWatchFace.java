@@ -28,13 +28,13 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.support.wearable.watchface.CanvasWatchFaceService;
 import android.support.wearable.watchface.WatchFaceStyle;
 import android.text.format.Time;
-import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.WindowInsets;
 
@@ -49,10 +49,6 @@ import com.google.android.gms.wearable.DataItem;
 import com.google.android.gms.wearable.DataItemBuffer;
 import com.google.android.gms.wearable.DataMap;
 import com.google.android.gms.wearable.DataMapItem;
-import com.google.android.gms.wearable.MessageApi;
-import com.google.android.gms.wearable.MessageEvent;
-import com.google.android.gms.wearable.Node;
-import com.google.android.gms.wearable.NodeApi;
 import com.google.android.gms.wearable.Wearable;
 
 import java.io.InputStream;
@@ -68,11 +64,10 @@ import java.util.concurrent.TimeUnit;
  * low-bit ambient mode, the text is drawn without anti-aliasing in ambient mode.
  */
 public class SunshineWatchFace extends CanvasWatchFaceService {
+    public static final int TIME_OUT = 1000000;
     private static final Typeface NORMAL_TYPEFACE =
             Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
-
-    public static final int TIME_OUT = 1000000;
-    private static final String DATE_FORMAT  = "EEE, MMM dd yyyy";
+    private static final String DATE_FORMAT = "EEE, MMM dd yyyy";
 
     /**
      * Update rate in milliseconds for interactive mode. We update once a second since seconds are
@@ -91,7 +86,6 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
     }
 
     private static class EngineHandler extends Handler {
-
 
 
         private final WeakReference<SunshineWatchFace.Engine> mWeakReference;
@@ -145,6 +139,7 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
         float mDateYOffset;
         float mLineYOffset;
         float mTempYOffset;
+        float mAssetRighMargin;
 
 
         /**
@@ -157,11 +152,35 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
 
         private String mMaxTemp = "";
         private String mMinTemp = "";
+        private final DataApi.DataListener onDataChangedListener = new DataApi.DataListener() {
+            @Override
+            public void onDataChanged(DataEventBuffer dataEvents) {
+                for (DataEvent event : dataEvents) {
+                    if (event.getType() == DataEvent.TYPE_CHANGED) {
+                        DataItem item = event.getDataItem();
+                        processConfigurationFor(item);
+                    }
+                }
+
+                dataEvents.release();
+                invalidate();
+            }
+        };
+        private final ResultCallback<DataItemBuffer> onConnectedResultCallback = new ResultCallback<DataItemBuffer>() {
+            @Override
+            public void onResult(DataItemBuffer dataItems) {
+                for (DataItem item : dataItems) {
+                    processConfigurationFor(item);
+                }
+
+                dataItems.release();
+                invalidate();
+            }
+        };
         private Bitmap mAssetBitmap;
 
-
         @Override
-        public void onCreate (SurfaceHolder holder){
+        public void onCreate(SurfaceHolder holder) {
             super.onCreate(holder);
             setWatchFaceStyle(new WatchFaceStyle.Builder(SunshineWatchFace.this)
                     .setCardPeekMode(WatchFaceStyle.PEEK_MODE_VARIABLE)
@@ -174,6 +193,7 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
             mDateYOffset = resources.getDimension(R.dimen.date_y_offset);
             mLineYOffset = resources.getDimension(R.dimen.line_y_offset);
             mTempYOffset = resources.getDimension(R.dimen.temp_y_offset);
+            mAssetRighMargin = resources.getDimension(R.dimen.asset_right_margin);
 
             mBackgroundPaint = new Paint();
             mBackgroundPaint.setColor(resources.getColor(R.color.background));
@@ -314,7 +334,6 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
             updateTimer();
         }
 
-
         @Override
         public void onDraw(Canvas canvas, Rect bounds) {
 
@@ -328,7 +347,7 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
             // Draw H:MM in ambient mode or H:MM:SS in interactive mode.
             mTime.setToNow();
             String text = String.format("%d:%02d", mTime.hour, mTime.minute);
-            canvas.drawText(text, bounds.centerX() - (mTextPaint.measureText(text))/2, mYOffset, mTextPaint);
+            canvas.drawText(text, bounds.centerX() - (mTextPaint.measureText(text)) / 2, mYOffset, mTextPaint);
 
             mDate = new Date();
             String dateText = mDateFormat.format(mDate);
@@ -340,13 +359,13 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
             canvas.drawText(mMaxTemp, bounds.centerX(), mTempYOffset, mMaxTempPaint);
             canvas.drawText(mMinTemp, bounds.centerX() + mMaxTempPaint.measureText(mMaxTemp), mTempYOffset, mMinTempPaint);
 
-            if(mAssetBitmap != null){
+            if (mAssetBitmap != null) {
                 Paint paint = new Paint();
                 paint.setAntiAlias(true);
                 paint.setFilterBitmap(true);
                 paint.setDither(true);
 
-                canvas.drawBitmap(mAssetBitmap, bounds.left, mTempYOffset, paint);
+                canvas.drawBitmap(mAssetBitmap, bounds.centerX() - (mAssetBitmap.getWidth()) - mAssetRighMargin, mLineYOffset, paint);
             }
 
         }
@@ -399,48 +418,22 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
 
         }
 
-        private final DataApi.DataListener onDataChangedListener = new DataApi.DataListener() {
-            @Override
-            public void onDataChanged(DataEventBuffer dataEvents) {
-                for (DataEvent event : dataEvents) {
-                    if (event.getType() == DataEvent.TYPE_CHANGED) {
-                        DataItem item = event.getDataItem();
-                        processConfigurationFor(item);
-                    }
-                }
-
-                dataEvents.release();
-                invalidate();
-            }
-        };
-
         private void processConfigurationFor(DataItem item) {
             if ("/sunshine_data".equals(item.getUri().getPath())) {
                 DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
                 if (dataMap.containsKey("MAXTEMP")) {
                     mMaxTemp = dataMap.getString("MAXTEMP");
                 }
-                if(dataMap.containsKey("MINTEMP")){
+                if (dataMap.containsKey("MINTEMP")) {
                     mMinTemp = dataMap.get("MINTEMP");
                 }
-                if(dataMap.containsKey("WEATHER_ASSET")){
+                if (dataMap.containsKey("WEATHER_ASSET")) {
                     Asset weatherAsset = dataMap.getAsset("WEATHER_ASSET");
-                    mAssetBitmap = loadBitmapFromAsset(weatherAsset);
+                    new GetBitmapAssetTask(weatherAsset).execute();
+
                 }
             }
         }
-
-        private final ResultCallback<DataItemBuffer> onConnectedResultCallback = new ResultCallback<DataItemBuffer>() {
-            @Override
-            public void onResult(DataItemBuffer dataItems) {
-                for (DataItem item : dataItems) {
-                    processConfigurationFor(item);
-                }
-
-                dataItems.release();
-                invalidate();
-            }
-        };
 
         public Bitmap loadBitmapFromAsset(Asset asset) {
             if (asset == null) {
@@ -459,8 +452,32 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
             if (assetInputStream == null) {
                 return null;
             }
+
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = 6; //decrease decoded image
             // decode the stream into a bitmap
-            return BitmapFactory.decodeStream(assetInputStream);
+            return BitmapFactory.decodeStream(assetInputStream, null, options);
+        }
+
+        private class GetBitmapAssetTask extends AsyncTask<Void, Void, Bitmap> {
+
+            Asset mAsset;
+
+            public GetBitmapAssetTask(Asset asset) {
+                mAsset = asset;
+            }
+
+            @Override
+            protected Bitmap doInBackground(Void... params) {
+                return loadBitmapFromAsset(mAsset);
+            }
+
+            @Override
+            protected void onPostExecute(Bitmap bitmap) {
+                super.onPostExecute(bitmap);
+                mAssetBitmap = bitmap;
+                invalidate();
+            }
         }
     }
 }
